@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# User-owned extension of Omarchy's stock updater. The packaged updater keeps
+# managing its built-in collectors; this wrapper adds Copilot and GLM afterward.
+
+set -uo pipefail
+
+script_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+stock_updater="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-agent-usage-update"
+collector="$script_root/omarchy-agent-usage-copilot"
+runtime_root="${XDG_DATA_HOME:-$HOME/.local/share}/omarchy/agent-usage-extensions"
+python="${OMARCHY_AGENT_USAGE_PYTHON:-$runtime_root/.venv/bin/python}"
+if [[ ! -x $python && -x $HOME/.local/share/omarchy/copilot-usage/.venv/bin/python ]]; then
+  python="$HOME/.local/share/omarchy/copilot-usage/.venv/bin/python"
+fi
+glm_collector="$script_root/omarchy-agent-usage-glm"
+usage_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/agents/usage"
+
+"$stock_updater" "$@"
+stock_status=$?
+
+include_copilot=true
+include_glm=true
+explicit_agents=()
+skip_next=false
+for arg in "$@"; do
+  if $skip_next; then
+    [[ $arg == copilot ]] && include_copilot=false
+    [[ $arg == glm ]] && include_glm=false
+    skip_next=false
+    continue
+  fi
+  case "$arg" in
+    --except) skip_next=true ;;
+    --force | --limits-only) ;;
+    *) explicit_agents+=("$arg") ;;
+  esac
+done
+
+if (( ${#explicit_agents[@]} > 0 )); then
+  include_copilot=false
+  include_glm=false
+  for agent in "${explicit_agents[@]}"; do
+    [[ $agent == copilot ]] && include_copilot=true
+    [[ $agent == glm ]] && include_glm=true
+  done
+fi
+
+copilot_status=0
+if $include_copilot; then
+  mkdir -p "$usage_dir"
+  if [[ ! -x $python ]]; then
+    echo "omarchy-agent-usage-update: copilot runtime missing; see plugin README" >&2
+    copilot_status=1
+  elif record=$(timeout 25 "$python" "$collector") && jq -e . >/dev/null 2>&1 <<<"$record"; then
+    tmp=$(mktemp "$usage_dir/.copilot.XXXXXX")
+    printf '%s\n' "$record" >"$tmp"
+    mv "$tmp" "$usage_dir/copilot.json"
+  else
+    echo "omarchy-agent-usage-update: copilot collector failed" >&2
+    copilot_status=1
+  fi
+fi
+
+glm_status=0
+if $include_glm; then
+  mkdir -p "$usage_dir"
+  if record=$(timeout 25 "$glm_collector") && jq -e . >/dev/null 2>&1 <<<"$record"; then
+    tmp=$(mktemp "$usage_dir/.glm.XXXXXX")
+    printf '%s\n' "$record" >"$tmp"
+    mv "$tmp" "$usage_dir/glm.json"
+  else
+    echo "omarchy-agent-usage-update: glm collector failed" >&2
+    glm_status=1
+  fi
+fi
+
+(( stock_status == 0 && copilot_status == 0 && glm_status == 0 ))

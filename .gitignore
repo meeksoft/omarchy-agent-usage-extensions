@@ -1,0 +1,42 @@
+# Python environments, bytecode, and tooling caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build and package output
+build/
+dist/
+*.egg-info/
+
+# Runtime output and generated usage records
+usage/
+copilot.json
+glm.json
+*.log
+*.pid
+*.tmp
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+auth.json
+credentials*
+secrets*
+*.token
+*.key
+*.pem
+
+# Editor and operating-system metadata
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Emit an Omarchy Agent Panel record for a GitHub Copilot subscription."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import shutil
+import subprocess
+from datetime import UTC, datetime
+from typing import Any
+
+from copilot import CopilotClient
+from copilot.generated.rpc import AccountGetQuotaRequest
+
+
+def base_record() -> dict[str, Any]:
+    return {
+        "schemaVersion": 1,
+        "id": "copilot",
+        "name": "GitHub Copilot",
+        "updatedAt": datetime.now(UTC).isoformat(),
+        "ready": False,
+        "hasLocalStats": False,
+        "hasPromptStats": False,
+        "tierLabel": "",
+        "usageStatusText": "Copilot quota unavailable",
+        "authHelpText": "Run `copilot login` to authenticate.",
+        "limits": [],
+        "todayPrompts": 0,
+        "todaySessions": 0,
+        "todayTotalTokens": 0,
+        "todayTokensByModel": {},
+        "recentDays": [],
+        "totalPrompts": 0,
+        "totalSessions": 0,
+        "activeDays": 0,
+        "activeDates": [],
+        "modelUsage": {},
+    }
+
+
+def plan_label(raw: str) -> str:
+    value = raw.strip().replace("_", " ").replace("-", " ")
+    if not value:
+        return "Copilot"
+    return "Copilot " + " ".join(part.capitalize() for part in value.split())
+
+
+def github_token() -> str | None:
+    """Get an auth token in memory; never include it in the output record."""
+    for key in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
+        if token := os.environ.get(key):
+            return token
+    if not shutil.which("gh"):
+        return None
+    try:
+        token = subprocess.check_output(
+            ["gh", "auth", "token", "--hostname", "github.com"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        ).strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return token or None
+
+
+async def collect() -> dict[str, Any]:
+    record = base_record()
+    token = github_token()
+    client = CopilotClient(github_token=token) if token else CopilotClient()
+    try:
+        await asyncio.wait_for(client.start(), timeout=15)
+        auth = await client.rpc.account.get_current_auth(timeout=8)
+        auth_data = auth.to_dict()
+        auth_info = auth_data.get("authInfo") or {}
+        record["tierLabel"] = plan_label(str(auth_info.get("copilotPlan") or ""))
+        quota = await client.rpc.account.get_quota(AccountGetQuotaRequest(), timeout=12)
+        snapshot = quota.quota_snapshots.get("premium_interactions")
+        if snapshot is None:
+            record["authHelpText"] = "GitHub did not return a premium-request quota."
+            return record
+
+        entitlement = snapshot.entitlement_requests
+        used = snapshot.used_requests
+        remaining_percent = max(0.0, min(100.0, snapshot.remaining_percentage))
+
+        if snapshot.is_unlimited_entitlement or entitlement < 0:
+            label = "Premium requests · unlimited"
+            percent_used = 0.0
+        else:
+            remaining = max(entitlement - used, 0)
+            label = f"Premium requests · {remaining}/{entitlement} left"
+            percent_used = 1.0 - (remaining_percent / 100.0)
+
+        record["limits"] = [
+            {
+                "label": label,
+                "percent": max(0.0, min(1.0, percent_used)),
+                "resetsAt": snapshot.reset_date or "",
+            }
+        ]
+        if not record["tierLabel"]:
+            record["tierLabel"] = "GitHub Copilot"
+        record["ready"] = True
+        record["usageStatusText"] = ""
+        record["authHelpText"] = ""
+        return record
+    except Exception as exc:
+        message = str(exc).strip() or type(exc).__name__
+        record["authHelpText"] = message
+        return record
+    finally:
+        try:
+            await asyncio.wait_for(client.stop(), timeout=3)
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    print(json.dumps(asyncio.run(collect()), separators=(",", ":")))

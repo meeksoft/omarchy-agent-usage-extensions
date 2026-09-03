@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set -euo pipefail
+
+command -v uv >/dev/null || {
+  echo "setup-copilot-runtime: uv is required" >&2
+  exit 1
+}
+
+runtime_root="${XDG_DATA_HOME:-$HOME/.local/share}/omarchy/agent-usage-extensions"
+python="$runtime_root/.venv/bin/python"
+
+mkdir -p "$runtime_root"
+uv venv "$runtime_root/.venv"
+uv pip install --python "$python" 'github-copilot-sdk==1.0.11'
+
+echo "Copilot collector runtime installed in the user data directory."

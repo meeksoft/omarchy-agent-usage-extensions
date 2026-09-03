@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""Emit an Omarchy Agent Panel record for a Z.ai GLM Coding Plan."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import ssl
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+
+ALLOWED_HOSTS = {"api.z.ai", "open.bigmodel.cn", "dev.bigmodel.cn"}
+TOKEN_KEYS = ("ZAI_CODING_PLAN_API_KEY", "ZAI_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+
+def base_record() -> dict[str, Any]:
+    return {
+        "schemaVersion": 1,
+        "id": "glm",
+        "name": "GLM Coding Plan",
+        "updatedAt": datetime.now(UTC).isoformat(),
+        "ready": False,
+        "hasLocalStats": False,
+        "hasPromptStats": False,
+        "tierLabel": "",
+        "usageStatusText": "GLM quota unavailable",
+        "authHelpText": "Configure the Z.ai key used by Claude Code.",
+        "limits": [],
+        "todayPrompts": 0,
+        "todaySessions": 0,
+        "todayTotalTokens": 0,
+        "todayTokensByModel": {},
+        "recentDays": [],
+        "totalPrompts": 0,
+        "totalSessions": 0,
+        "activeDays": 0,
+        "activeDates": [],
+        "modelUsage": {},
+    }
+
+
+def read_json_env(path: Path) -> dict[str, str]:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    env = data.get("env") if isinstance(data, dict) else None
+    if not isinstance(env, dict):
+        return {}
+    return {str(key): str(value) for key, value in env.items() if value is not None}
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    """Read simple KEY=value profile files without evaluating shell code."""
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        match = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$", line)
+        if not match:
+            continue
+        value = match.group(2)
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        values[match.group(1)] = value
+    return values
+
+
+def credentials() -> tuple[str, str]:
+    values: dict[str, str] = {}
+    home = Path.home()
+    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", home / ".claude"))
+    for path in (
+        config_dir / "settings.json",
+        config_dir / "settings.local.json",
+        home / ".config/claude-profiles/glm.env",
+    ):
+        loaded = read_env_file(path) if path.suffix == ".env" else read_json_env(path)
+        for key, value in loaded.items():
+            values.setdefault(key, value)
+    values.update({key: value for key, value in os.environ.items() if value})
+
+    token = next((values.get(key, "") for key in TOKEN_KEYS if values.get(key)), "")
+    base_url = values.get("ANTHROPIC_BASE_URL", "https://api.z.ai/api/anthropic")
+    return token, base_url
+
+
+def percentage(item: dict[str, Any]) -> float | None:
+    raw = item.get("percentage")
+    if isinstance(raw, (int, float)):
+        return max(0.0, min(1.0, float(raw) / 100.0))
+    current, total = item.get("currentValue"), item.get("usage")
+    if isinstance(current, (int, float)) and isinstance(total, (int, float)) and total > 0:
+        return max(0.0, min(1.0, float(current) / float(total)))
+    return None
+
+
+def reset_time(item: dict[str, Any]) -> str:
+    for key in ("nextResetTime", "resetTime", "resetsAt", "resetAt"):
+        value = item.get(key)
+        if isinstance(value, (int, float)):
+            seconds = float(value) / 1000.0 if value > 10_000_000_000 else float(value)
+            try:
+                return datetime.fromtimestamp(seconds, UTC).isoformat()
+            except (OverflowError, OSError, ValueError):
+                pass
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def limit_label(item: dict[str, Any]) -> str:
+    kind = str(item.get("type", "")).upper()
+    unit, number = item.get("unit"), item.get("number")
+    if unit == 3:
+        return f"{number or 5}-hour usage"
+    if unit == 6:
+        return "Weekly usage" if number in (None, 1) else f"{number}-week usage"
+    if kind == "TIME_LIMIT":
+        return "Monthly MCP usage"
+    if kind == "CREDIT_LIMIT":
+        return "Coding-plan credits"
+    return "Coding-plan usage"
+
+
+def collect() -> dict[str, Any]:
+    record = base_record()
+    token, base_url = credentials()
+    if not token:
+        return record
+
+    parsed = urlparse(base_url)
+    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
+        record["authHelpText"] = "ANTHROPIC_BASE_URL is not a supported Z.ai endpoint."
+        return record
+
+    endpoint = f"https://{parsed.netloc}/api/monitor/usage/quota/limit"
+    request = urllib.request.Request(
+        endpoint,
+        headers={
+            "Authorization": token,
+            "Accept-Language": "en-US,en",
+            "Content-Type": "application/json",
+            "User-Agent": "omarchy-agent-usage-glm/1",
+        },
+    )
+    try:
+        context = ssl.create_default_context()
+        with urllib.request.urlopen(request, timeout=15, context=context) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        record["authHelpText"] = f"Z.ai rejected the quota request (HTTP {exc.code})."
+        return record
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        record["authHelpText"] = f"Z.ai quota request failed: {type(exc).__name__}."
+        return record
+
+    data = payload.get("data", payload) if isinstance(payload, dict) else {}
+    raw_limits = data.get("limits", []) if isinstance(data, dict) else []
+    limits = []
+    for item in raw_limits if isinstance(raw_limits, list) else []:
+        if not isinstance(item, dict):
+            continue
+        used = percentage(item)
+        if used is None:
+            continue
+        limits.append({"label": limit_label(item), "percent": used, "resetsAt": reset_time(item)})
+
+    level = data.get("level", "") if isinstance(data, dict) else ""
+    record["tierLabel"] = f"GLM {str(level).capitalize()}" if level else "GLM Coding Plan"
+    record["limits"] = limits
+    record["ready"] = bool(limits)
+    record["usageStatusText"] = "" if limits else "No GLM quota limits returned"
+    record["authHelpText"] = "" if limits else "The key is valid, but no usable coding-plan limits were returned."
+    return record
+
+
+if __name__ == "__main__":
+    print(json.dumps(collect(), separators=(",", ":")))
