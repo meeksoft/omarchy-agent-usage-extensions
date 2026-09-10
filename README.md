@@ -72,11 +72,18 @@ source of truth.
 
 ### GLM Coding Plan
 
-The collector reads credentials at runtime, in this order:
+The collector reads credentials at runtime. Later sources never override an
+earlier one, except the process environment, which wins over every file:
 
-1. Process environment variables.
+1. `~/.config/omarchy/agents/glm.json` — the preferred location. Keys sit at
+   the top level, or nested under `env`. Keep it `0600`.
 2. Claude Code's `settings.json` or `settings.local.json` `env` values.
-3. `~/.config/claude-profiles/glm.env`.
+3. `~/.config/claude-profiles/glm.env`, still read for existing installs.
+4. Process environment variables, which override the files above.
+
+The bar panel runs under quickshell, which never sources a shell rc, so a key
+exported from `~/.zshrc` reaches a terminal but not the panel. Put it in one of
+the files above.
 
 Supported token names are `ZAI_CODING_PLAN_API_KEY`, `ZAI_API_KEY`,
 `ZHIPU_API_KEY`, and `ZHIPUAI_API_KEY`, in that order, so a coding-plan key

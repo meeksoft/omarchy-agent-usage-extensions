@@ -50,14 +50,25 @@ def base_record() -> dict[str, Any]:
 
 
 def read_json_env(path: Path) -> dict[str, str]:
+    """Read env values from a JSON config file.
+
+    Claude Code nests them under "env"; an Omarchy agent config keeps its
+    settings at the top level. Accept both, with the nested block winning, so
+    one reader serves either shape.
+    """
     try:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
         return {}
-    env = data.get("env") if isinstance(data, dict) else None
-    if not isinstance(env, dict):
+    if not isinstance(data, dict):
         return {}
-    return {str(key): str(value) for key, value in env.items() if value is not None}
+    values = {str(key): str(value) for key, value in data.items()
+              if isinstance(value, (str, int, float))}
+    env = data.get("env")
+    if isinstance(env, dict):
+        values.update({str(key): str(value) for key, value in env.items()
+                       if value is not None})
+    return values
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -82,7 +93,12 @@ def credentials() -> tuple[str, str]:
     values: dict[str, str] = {}
     home = Path.home()
     config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", home / ".claude"))
+    # Omarchy's own per-agent config directory first: it is where this plugin
+    # asks users to put the key, and the earlier entry wins below. The Claude
+    # Code files and the profile env file stay supported for existing installs.
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
     for path in (
+        config_home / "omarchy/agents/glm.json",
         config_dir / "settings.json",
         config_dir / "settings.local.json",
         home / ".config/claude-profiles/glm.env",
