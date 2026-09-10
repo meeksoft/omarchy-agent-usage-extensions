@@ -36,6 +36,20 @@ omarchy plugin add REPOSITORY_URL --enable
 Third-party Omarchy plugins execute as the current user. Review the repository
 before enabling it.
 
+## Copilot collector runtime
+
+`bin/setup-copilot-runtime` creates a virtual environment for the Copilot SDK in
+`$XDG_DATA_HOME/omarchy-agent-usage-extensions` (`~/.local/share/...` by
+default). It is deliberately a sibling of `$XDG_DATA_HOME/omarchy`: a system
+upgraded to Omarchy Quattro leaves that directory as a compatibility symlink
+into the root-owned package tree, where the venv cannot be created.
+
+Runtimes created by earlier versions, under `omarchy/agent-usage-extensions` or
+`omarchy/copilot-usage`, are still used when present. To keep the interpreter
+somewhere else entirely, set `OMARCHY_AGENT_USAGE_PYTHON` to its path; the panel
+reads it from the session environment, so `~/.config/environment.d/` is the
+place to set it for a graphical session.
+
 ## Authentication
 
 ### GitHub Copilot
@@ -102,8 +116,9 @@ unlink "$HOME/.config/omarchy/plugins/meeksoft.agent-usage-extensions"
 omarchy restart shell
 ```
 
-The optional Copilot SDK runtime remains in the user data directory so other
-checkouts can reuse it. It can be removed separately if no longer needed.
+The optional Copilot SDK runtime remains in
+`$XDG_DATA_HOME/omarchy-agent-usage-extensions` so other checkouts can reuse it.
+It can be removed separately if no longer needed.
 
 ## Privacy and security
 

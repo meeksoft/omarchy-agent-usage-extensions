@@ -2,16 +2,30 @@
 
 set -euo pipefail
 
+script_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_root/../lib/runtime.sh"
+
 command -v uv >/dev/null || {
   echo "setup-copilot-runtime: uv is required" >&2
   exit 1
 }
 
-runtime_root="${XDG_DATA_HOME:-$HOME/.local/share}/omarchy/agent-usage-extensions"
+runtime_root="$(agent_usage_runtime_root)"
 python="$runtime_root/.venv/bin/python"
 
+# A parent that is not writable is the symptom of the Quattro compatibility
+# symlink, so name it rather than letting mkdir fail with a bare path.
+parent="$(dirname -- "$runtime_root")"
+mkdir -p "$parent" 2>/dev/null || true
+[[ -w $parent ]] || {
+  echo "setup-copilot-runtime: $parent is not writable" >&2
+  echo "setup-copilot-runtime: set XDG_DATA_HOME, or point OMARCHY_AGENT_USAGE_PYTHON at an existing interpreter" >&2
+  exit 1
+}
+
 mkdir -p "$runtime_root"
-uv venv "$runtime_root/.venv"
+# Re-running the setup should refresh an existing runtime, not abort on it.
+uv venv --allow-existing "$runtime_root/.venv"
 uv pip install --python "$python" 'github-copilot-sdk==1.0.11'
 
-echo "Copilot collector runtime installed in the user data directory."
+echo "Copilot collector runtime installed in $runtime_root."

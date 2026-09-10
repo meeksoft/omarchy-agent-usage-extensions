@@ -6,13 +6,11 @@
 set -uo pipefail
 
 script_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_root/../lib/runtime.sh"
+
 stock_updater="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-agent-usage-update"
 collector="$script_root/omarchy-agent-usage-copilot"
-runtime_root="${XDG_DATA_HOME:-$HOME/.local/share}/omarchy/agent-usage-extensions"
-python="${OMARCHY_AGENT_USAGE_PYTHON:-$runtime_root/.venv/bin/python}"
-if [[ ! -x $python && -x $HOME/.local/share/omarchy/copilot-usage/.venv/bin/python ]]; then
-  python="$HOME/.local/share/omarchy/copilot-usage/.venv/bin/python"
-fi
+python="$(agent_usage_python)"
 glm_collector="$script_root/omarchy-agent-usage-glm"
 usage_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/agents/usage"
 
