@@ -179,6 +179,26 @@ Item {
 
   // ------------------------------------------------------------- providers
 
+  // The usage directory is scanned with find, which yields entries in whatever
+  // order the filesystem holds them, and every refresh rewrites each record
+  // through mktemp and mv — so a record can change slots without its contents
+  // changing. Left unsorted, that quietly re-points the panel's default
+  // selection at a different agent. Rank by a fixed order instead, matching the
+  // provider list in manifest.json, and fall back to the id so an agent that
+  // predates this list still lands in the same place every time.
+  readonly property var providerOrder: ["claude", "codex", "fireworks", "copilot", "glm"]
+
+  function providerRank(id) {
+    var at = providerOrder.indexOf(id)
+    return at === -1 ? providerOrder.length : at
+  }
+
+  function compareProviders(a, b) {
+    var byRank = providerRank(a.providerId) - providerRank(b.providerId)
+    if (byRank !== 0) return byRank
+    return a.providerId < b.providerId ? -1 : a.providerId > b.providerId ? 1 : 0
+  }
+
   // An agent earns a place in the bar and the panel by being switched on in
   // settings and having actually produced numbers — locally or on a synced
   // device. With nothing to show, the whole module collapses out of the bar
@@ -207,7 +227,7 @@ Item {
       var syncedDisplay = displayProvider({ id: syncedId, name: stats.providerName || syncedId })
       if (providerHasData(syncedDisplay)) result.push(syncedDisplay)
     }
-    return result
+    return result.sort(compareProviders)
   }
 
   function providerEnabled(id) {
