@@ -16,7 +16,11 @@ from urllib.parse import urlparse
 
 
 ALLOWED_HOSTS = {"api.z.ai", "open.bigmodel.cn", "dev.bigmodel.cn"}
-TOKEN_KEYS = ("ZAI_CODING_PLAN_API_KEY", "ZAI_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+# Z.ai names only, most specific first, so a key meant for the coding plan
+# always outranks a generic platform key. ANTHROPIC_AUTH_TOKEN is deliberately
+# absent: it is Anthropic's name, and the default base URL points at Z.ai, so
+# honouring it would send a real Anthropic key to a third party.
+TOKEN_KEYS = ("ZAI_CODING_PLAN_API_KEY", "ZAI_API_KEY", "ZHIPU_API_KEY", "ZHIPUAI_API_KEY")
 
 
 def base_record() -> dict[str, Any]:
@@ -30,7 +34,7 @@ def base_record() -> dict[str, Any]:
         "hasPromptStats": False,
         "tierLabel": "",
         "usageStatusText": "GLM quota unavailable",
-        "authHelpText": "Configure the Z.ai key used by Claude Code.",
+        "authHelpText": "Set ZAI_CODING_PLAN_API_KEY in ~/.config/claude-profiles/glm.env.",
         "limits": [],
         "todayPrompts": 0,
         "todaySessions": 0,

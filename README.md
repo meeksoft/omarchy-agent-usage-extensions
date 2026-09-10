@@ -78,8 +78,11 @@ The collector reads credentials at runtime, in this order:
 2. Claude Code's `settings.json` or `settings.local.json` `env` values.
 3. `~/.config/claude-profiles/glm.env`.
 
-Supported token names are `ZAI_CODING_PLAN_API_KEY`, `ZAI_API_KEY`, and
-`ANTHROPIC_AUTH_TOKEN`. `ANTHROPIC_BASE_URL` selects international Z.ai or
+Supported token names are `ZAI_CODING_PLAN_API_KEY`, `ZAI_API_KEY`,
+`ZHIPU_API_KEY`, and `ZHIPUAI_API_KEY`, in that order, so a coding-plan key
+outranks a generic platform key. `ANTHROPIC_AUTH_TOKEN` is not accepted: the
+default endpoint is Z.ai, and reading Anthropic's own variable would send an
+Anthropic key to a third party. `ANTHROPIC_BASE_URL` selects international Z.ai or
 BigModel China. Credentials are never copied into this repository or generated
 usage records.
 
