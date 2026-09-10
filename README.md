@@ -98,6 +98,24 @@ the Claude provider, avoiding duplicate local statistics.
 
 ## Usage
 
+### Exhaustion alarm
+
+A provider is alarming when its fullest limit window reaches 90%, or when a
+prepaid balance falls to its last 10% of funded credits.
+
+The bar icon turns urgent when **any** enabled provider is alarming, not only
+the one whose tab happens to be selected. The icon is only ever read while the
+panel is shut, when the selection is invisible state, so scoping it to the
+selection would hide an exhausted agent behind whichever tab was left open.
+This differs from the packaged `omarchy.agents` widget, which colours the icon
+from the selected provider alone.
+
+The tab strip names the culprit: an alarming provider's tab is drawn in the
+urgent colour. The active theme pins the selected tab's label to a fixed
+colour, so this shows on the tabs you are not currently reading — which is the
+case the strip needs to answer. The selected provider's own meters already turn
+urgent in the panel body.
+
 The panel refreshes automatically. To update manually:
 
 ```bash

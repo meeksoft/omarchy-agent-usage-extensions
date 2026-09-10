@@ -51,9 +51,27 @@ Panel {
   readonly property var balance: provider ? (provider.balance || null) : null
   // A prepaid account runs low the way a subscription window fills up: the
   // last 10% of the funded credits lights the same alarm.
-  readonly property bool balanceAlarming: !!balance && balance.funded > 0
-    && balance.remaining / balance.funded <= 0.1
-  readonly property bool alarming: (!!headline && headline.percent >= 0.9) || balanceAlarming
+  readonly property bool balanceAlarming: balanceAlarmingFor(provider)
+  readonly property bool alarming: providerAlarming(provider)
+  // The bar icon is only ever seen while the panel is shut, when the selected
+  // provider is invisible state the reader cannot check. Scoping the icon to
+  // that selection hides an exhausted agent behind whichever tab was left
+  // open, so the icon answers for every provider and the tabs say which.
+  readonly property bool anyAlarming: {
+    for (var i = 0; i < providers.length; i++)
+      if (providerAlarming(providers[i])) return true
+    return false
+  }
+
+  function balanceAlarmingFor(p) {
+    var b = p ? (p.balance || null) : null
+    return !!b && b.funded > 0 && b.remaining / b.funded <= 0.1
+  }
+
+  function providerAlarming(p) {
+    var window = bindingWindow(p)
+    return (!!window && window.percent >= 0.9) || balanceAlarmingFor(p)
+  }
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
   function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
@@ -376,7 +394,7 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: "󱚣"
-    active: root.alarming
+    active: root.anyAlarming
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) root.launchAgent()
       else if (buttonCode === Qt.MiddleButton) root.selectProvider(root.providerIndex + 1)
@@ -519,7 +537,13 @@ Panel {
                 selected: index === root.providerIndex
                 hasCursor: root.cursorActive && index === root.providerIndex
                 bordered: true
-                foreground: root.foreground
+                // An exhausted agent reads red in the tab strip, so the bar's
+                // aggregate alarm can be traced to a provider without opening
+                // each one. The theme pins a selected label to a fixed colour,
+                // so this shows on the tabs you are not currently reading —
+                // which is exactly the case the strip has to answer for.
+                readonly property bool alarming: root.providerAlarming(modelData)
+                foreground: alarming ? root.urgent : root.foreground
                 fontFamily: root.fontFamily
                 fontSize: Style.font.bodySmall
                 verticalPadding: Style.spacing.controlPaddingY
