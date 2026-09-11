@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "meeksoft.agent-usage-extensions",
   "name": "Agent Usage Extensions",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": "Meeksoft",
   "license": "MIT",
   "description": "Adds GitHub Copilot and GLM Coding Plan quotas to Omarchy's Agents panel.",
@@ -30,7 +30,8 @@
         "codex": { "enabled": true },
         "fireworks": { "enabled": true },
         "copilot": { "enabled": true },
-        "glm": { "enabled": true }
+        "glm": { "enabled": true },
+        "grok": { "enabled": true }
       },
       "refreshIntervalSec": 900,
       "syncMode": "Off",

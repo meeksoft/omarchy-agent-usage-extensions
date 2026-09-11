@@ -13,8 +13,8 @@ source "$script_root/../lib/runtime.sh"
 # SDK virtualenv, "direct" for one that runs on the system Python. Adding an
 # agent is a line here plus bin/omarchy-agent-usage-<id>; nothing below knows
 # any agent by name.
-agent_ids=(copilot glm)
-declare -A agent_runner=([copilot]=runtime [glm]=direct)
+agent_ids=(copilot glm grok)
+declare -A agent_runner=([copilot]=runtime [glm]=direct [grok]=direct)
 
 stock_updater="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-agent-usage-update"
 runtime_python="$(agent_usage_python)"

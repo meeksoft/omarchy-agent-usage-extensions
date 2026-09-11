@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Emit an Omarchy Agent Panel record for an xAI (Grok) API team."""
+
+from __future__ import annotations
+
+import json
+import ssl
+import sys
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from agent_credentials import agent_values, first_present  # noqa: E402
+
+
+# Billing lives on the management host only, and the key that reaches it is far
+# more powerful than an inference key. Refuse to send it anywhere else.
+ALLOWED_HOSTS = {"management-api.x.ai"}
+DEFAULT_BASE_URL = "https://management-api.x.ai"
+# A management key, not the xai- inference key: the billing endpoints reject
+# that one. Minted at xAI Console -> Settings -> Management Keys.
+TOKEN_KEYS = ("XAI_MANAGEMENT_KEY",)
+TEAM_KEYS = ("XAI_TEAM_ID",)
+# Origins that add credit. SPEND is the deduction and is already reflected in
+# the running total, so counting it would double-count the spend.
+FUNDING_ORIGINS = {"PURCHASE", "AUTO_PURCHASE", "MANUAL", "REFUND"}
+
+
+def base_record() -> dict[str, Any]:
+    return {
+        "schemaVersion": 1,
+        "id": "grok",
+        "name": "Grok",
+        "updatedAt": datetime.now(UTC).isoformat(),
+        "ready": False,
+        "hasLocalStats": False,
+        "hasPromptStats": False,
+        "tierLabel": "",
+        "usageStatusText": "Grok balance unavailable",
+        "authHelpText": "Set XAI_MANAGEMENT_KEY and XAI_TEAM_ID in ~/.config/omarchy/agents/grok.json.",
+        "limits": [],
+        "todayPrompts": 0,
+        "todaySessions": 0,
+        "todayTotalTokens": 0,
+        "todayTokensByModel": {},
+        "recentDays": [],
+        "totalPrompts": 0,
+        "totalSessions": 0,
+        "activeDays": 0,
+        "activeDates": [],
+        "modelUsage": {},
+    }
+
+
+def amount(raw: Any) -> Decimal:
+    """Money arrives as {"val": "12.34"}; anything unparseable reads as zero."""
+    if isinstance(raw, dict):
+        raw = raw.get("val", "0")
+    try:
+        return Decimal(str(raw))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+
+
+def fetch(base_url: str, token: str, path: str) -> Any:
+    url = f"{base_url.rstrip('/')}{path}"
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
+        raise ValueError("refusing a non-management endpoint")
+    request = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    )
+    with urllib.request.urlopen(request, timeout=20, context=ssl.create_default_context()) as response:
+        return json.loads(response.read().decode())
+
+
+def collect() -> dict[str, Any]:
+    record = base_record()
+    values = agent_values("grok")
+    token = first_present(values, TOKEN_KEYS)
+    team = first_present(values, TEAM_KEYS)
+    if not token or not team:
+        return record
+
+    base_url = values.get("XAI_MANAGEMENT_BASE_URL", DEFAULT_BASE_URL)
+    try:
+        payload = fetch(base_url, token, f"/v1/billing/teams/{team}/prepaid/balance")
+    except urllib.error.HTTPError as exc:
+        record["authHelpText"] = (
+            "The management key was rejected (HTTP 401); check its ACLs."
+            if exc.code in (401, 403)
+            else f"xAI rejected the balance request (HTTP {exc.code})."
+        )
+        return record
+    except Exception as exc:
+        record["authHelpText"] = f"xAI balance request failed: {type(exc).__name__}."
+        return record
+
+    record["authHelpText"] = ""
+    remaining = amount(payload.get("total"))
+    changes = payload.get("changes")
+    changes = changes if isinstance(changes, list) else []
+    funded = sum(
+        (amount(entry.get("amount")) for entry in changes
+         if isinstance(entry, dict)
+         and str(entry.get("changeOrigin", "")).upper() in FUNDING_ORIGINS
+         and str(entry.get("topupStatus", "SUCCEEDED")).upper() == "SUCCEEDED"),
+        Decimal("0"),
+    )
+
+    # A team on the free tier has never been funded and has nothing to meter.
+    # Emit no balance so providerHasData leaves it out entirely rather than
+    # showing an empty bar next to the agents that do have numbers.
+    if funded <= 0 and remaining <= 0:
+        record["usageStatusText"] = "No prepaid credit on this xAI team"
+        return record
+
+    record["ready"] = True
+    record["tierLabel"] = "xAI API"
+    record["usageStatusText"] = ""
+    record["balance"] = {
+        "remaining": float(remaining),
+        "funded": float(max(funded, remaining)),
+        "spent": float(max(Decimal("0"), max(funded, remaining) - remaining)),
+        "currency": "USD",
+        "estimated": False,
+    }
+    return record
+
+
+if __name__ == "__main__":
+    print(json.dumps(collect()))

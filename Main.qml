@@ -186,7 +186,7 @@ Item {
   // selection at a different agent. Rank by a fixed order instead, matching the
   // provider list in manifest.json, and fall back to the id so an agent that
   // predates this list still lands in the same place every time.
-  readonly property var providerOrder: ["claude", "codex", "fireworks", "copilot", "glm"]
+  readonly property var providerOrder: ["claude", "codex", "fireworks", "copilot", "glm", "grok"]
 
   function providerRank(id) {
     var at = providerOrder.indexOf(id)
