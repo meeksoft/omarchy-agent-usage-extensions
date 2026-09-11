@@ -10,9 +10,10 @@ additional providers remain readable.
 ## Requirements
 
 - Omarchy Quattro with the `omarchy.agents` plugin
-- `jq`, Python 3, and `uv`
-- GitHub Copilot CLI for Copilot quota
-- A Z.ai or BigModel Coding Plan used through Claude Code for GLM quota
+- `jq`, `timeout` (coreutils), and Bash 4 or newer
+- Python 3.11 or newer, and `uv` to build the Copilot collector's environment
+- GitHub Copilot CLI and an authenticated GitHub CLI for Copilot quota
+- A Z.ai or BigModel Coding Plan key for GLM quota
 
 ## Install from a local checkout
 
@@ -51,6 +52,25 @@ reads it from the session environment, so `~/.config/environment.d/` is the
 place to set it for a graphical session.
 
 ## Authentication
+
+### Where a key is read from
+
+Every collector here resolves credentials the same way, in `lib/agent_credentials.py`:
+
+1. The process environment, which overrides everything below.
+2. `~/.config/omarchy/agents/<id>.json` — keys at the top level, or nested
+   under `env`. Keep it `0600` in a `0700` directory.
+3. Any per-agent legacy path that collector still supports.
+
+Where an agent's own tool already keeps a credential on disk, the collector
+reads that rather than asking for a copy: Copilot uses the authenticated GitHub
+CLI, and the packaged Claude and Codex collectors read their own state
+directories.
+
+The bar panel runs under quickshell, which never sources a shell rc. A key
+exported from `~/.zshrc` therefore reaches a terminal but not the panel, so an
+agent that only has an exported key shows as unavailable there. Put it in the
+agent config file, or in a store the agent's own tool writes.
 
 ### GitHub Copilot
 

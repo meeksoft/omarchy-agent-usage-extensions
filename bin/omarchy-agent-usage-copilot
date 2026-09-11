@@ -8,8 +8,13 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from agent_credentials import agent_values, first_present  # noqa: E402
 
 from copilot import CopilotClient
 from copilot.generated.rpc import AccountGetQuotaRequest
@@ -48,11 +53,17 @@ def plan_label(raw: str) -> str:
     return "Copilot " + " ".join(part.capitalize() for part in value.split())
 
 
+TOKEN_KEYS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+
+
 def github_token() -> str | None:
     """Get an auth token in memory; never include it in the output record."""
-    for key in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
-        if token := os.environ.get(key):
-            return token
+    # Same resolution order as every other agent here, so a token may live in
+    # ~/.config/omarchy/agents/copilot.json where the panel can read it. The
+    # authenticated GitHub CLI remains the fallback, and is what most installs
+    # actually use.
+    if token := first_present(agent_values("copilot"), TOKEN_KEYS):
+        return token
     if not shutil.which("gh"):
         return None
     try:
@@ -109,8 +120,16 @@ async def collect() -> dict[str, Any]:
         record["authHelpText"] = ""
         return record
     except Exception as exc:
+        # The SDK reports an unauthenticated account as a JSON-RPC failure, and
+        # that string tells a reader nothing they can act on. The panel gets the
+        # two commands that fix it; the raw text stays in the status line for
+        # anything that is genuinely a different fault.
         message = str(exc).strip() or type(exc).__name__
-        record["authHelpText"] = message
+        if "not authenticated" in message.lower():
+            record["authHelpText"] = "Run `gh auth login`, then `copilot login`."
+        else:
+            record["authHelpText"] = message
+        record["usageStatusText"] = message
         return record
     finally:
         try:

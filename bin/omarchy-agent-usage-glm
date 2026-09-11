@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import ssl
+import sys
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from agent_credentials import agent_values, first_present  # noqa: E402
 
 
 ALLOWED_HOSTS = {"api.z.ai", "open.bigmodel.cn", "dev.bigmodel.cn"}
@@ -34,7 +37,7 @@ def base_record() -> dict[str, Any]:
         "hasPromptStats": False,
         "tierLabel": "",
         "usageStatusText": "GLM quota unavailable",
-        "authHelpText": "Set ZAI_CODING_PLAN_API_KEY in ~/.config/claude-profiles/glm.env.",
+        "authHelpText": "Set ZAI_CODING_PLAN_API_KEY in ~/.config/omarchy/agents/glm.json.",
         "limits": [],
         "todayPrompts": 0,
         "todaySessions": 0,
@@ -49,66 +52,17 @@ def base_record() -> dict[str, Any]:
     }
 
 
-def read_json_env(path: Path) -> dict[str, str]:
-    """Read env values from a JSON config file.
-
-    Claude Code nests them under "env"; an Omarchy agent config keeps its
-    settings at the top level. Accept both, with the nested block winning, so
-    one reader serves either shape.
-    """
-    try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    values = {str(key): str(value) for key, value in data.items()
-              if isinstance(value, (str, int, float))}
-    env = data.get("env")
-    if isinstance(env, dict):
-        values.update({str(key): str(value) for key, value in env.items()
-                       if value is not None})
-    return values
-
-
-def read_env_file(path: Path) -> dict[str, str]:
-    """Read simple KEY=value profile files without evaluating shell code."""
-    values: dict[str, str] = {}
-    try:
-        lines = path.read_text().splitlines()
-    except OSError:
-        return values
-    for line in lines:
-        match = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$", line)
-        if not match:
-            continue
-        value = match.group(2)
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-            value = value[1:-1]
-        values[match.group(1)] = value
-    return values
-
-
 def credentials() -> tuple[str, str]:
-    values: dict[str, str] = {}
+    # ~/.config/omarchy/agents/glm.json is the preferred home; the Claude Code
+    # settings and the profile env file stay supported for existing installs.
     home = Path.home()
     config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", home / ".claude"))
-    # Omarchy's own per-agent config directory first: it is where this plugin
-    # asks users to put the key, and the earlier entry wins below. The Claude
-    # Code files and the profile env file stay supported for existing installs.
-    config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
-    for path in (
-        config_home / "omarchy/agents/glm.json",
+    values = agent_values("glm", (
         config_dir / "settings.json",
         config_dir / "settings.local.json",
         home / ".config/claude-profiles/glm.env",
-    ):
-        loaded = read_env_file(path) if path.suffix == ".env" else read_json_env(path)
-        for key, value in loaded.items():
-            values.setdefault(key, value)
-    values.update({key: value for key, value in os.environ.items() if value})
-
-    token = next((values.get(key, "") for key in TOKEN_KEYS if values.get(key)), "")
+    ))
+    token = first_present(values, TOKEN_KEYS)
     base_url = values.get("ANTHROPIC_BASE_URL", "https://api.z.ai/api/anthropic")
     return token, base_url
 

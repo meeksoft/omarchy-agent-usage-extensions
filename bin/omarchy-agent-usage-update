@@ -1,30 +1,36 @@
 #!/bin/bash
 
 # User-owned extension of Omarchy's stock updater. The packaged updater keeps
-# managing its built-in collectors; this wrapper adds Copilot and GLM afterward.
+# managing its built-in collectors; this wrapper adds the extras afterward.
 
 set -uo pipefail
 
 script_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_root/../lib/runtime.sh"
 
+# Every agent this wrapper adds, in the order their records are written. The
+# value names the interpreter: "runtime" for a collector that needs the Copilot
+# SDK virtualenv, "direct" for one that runs on the system Python. Adding an
+# agent is a line here plus bin/omarchy-agent-usage-<id>; nothing below knows
+# any agent by name.
+agent_ids=(copilot glm)
+declare -A agent_runner=([copilot]=runtime [glm]=direct)
+
 stock_updater="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-agent-usage-update"
-collector="$script_root/omarchy-agent-usage-copilot"
-python="$(agent_usage_python)"
-glm_collector="$script_root/omarchy-agent-usage-glm"
+runtime_python="$(agent_usage_python)"
 usage_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/agents/usage"
 
 "$stock_updater" "$@"
 stock_status=$?
 
-include_copilot=true
-include_glm=true
+declare -A include
+for id in "${agent_ids[@]}"; do include[$id]=true; done
+
 explicit_agents=()
 skip_next=false
 for arg in "$@"; do
   if $skip_next; then
-    [[ $arg == copilot ]] && include_copilot=false
-    [[ $arg == glm ]] && include_glm=false
+    [[ -n ${include[$arg]:-} ]] && include[$arg]=false
     skip_next=false
     continue
   fi
@@ -35,42 +41,39 @@ for arg in "$@"; do
   esac
 done
 
+# Naming agents explicitly restricts the run to them, so start from nothing.
 if (( ${#explicit_agents[@]} > 0 )); then
-  include_copilot=false
-  include_glm=false
+  for id in "${agent_ids[@]}"; do include[$id]=false; done
   for agent in "${explicit_agents[@]}"; do
-    [[ $agent == copilot ]] && include_copilot=true
-    [[ $agent == glm ]] && include_glm=true
+    [[ -n ${include[$agent]:-} ]] && include[$agent]=true
   done
 fi
 
-copilot_status=0
-if $include_copilot; then
+collect_status=0
+for id in "${agent_ids[@]}"; do
+  ${include[$id]} || continue
+  collector="$script_root/omarchy-agent-usage-$id"
   mkdir -p "$usage_dir"
-  if [[ ! -x $python ]]; then
-    echo "omarchy-agent-usage-update: copilot runtime missing; see plugin README" >&2
-    copilot_status=1
-  elif record=$(timeout 25 "$python" "$collector") && jq -e . >/dev/null 2>&1 <<<"$record"; then
-    tmp=$(mktemp "$usage_dir/.copilot.XXXXXX")
-    printf '%s\n' "$record" >"$tmp"
-    mv "$tmp" "$usage_dir/copilot.json"
-  else
-    echo "omarchy-agent-usage-update: copilot collector failed" >&2
-    copilot_status=1
-  fi
-fi
 
-glm_status=0
-if $include_glm; then
-  mkdir -p "$usage_dir"
-  if record=$(timeout 25 "$glm_collector") && jq -e . >/dev/null 2>&1 <<<"$record"; then
-    tmp=$(mktemp "$usage_dir/.glm.XXXXXX")
-    printf '%s\n' "$record" >"$tmp"
-    mv "$tmp" "$usage_dir/glm.json"
+  if [[ ${agent_runner[$id]} == runtime ]]; then
+    if [[ ! -x $runtime_python ]]; then
+      echo "omarchy-agent-usage-update: $id runtime missing; see plugin README" >&2
+      collect_status=1
+      continue
+    fi
+    command=("$runtime_python" "$collector")
   else
-    echo "omarchy-agent-usage-update: glm collector failed" >&2
-    glm_status=1
+    command=("$collector")
   fi
-fi
 
-(( stock_status == 0 && copilot_status == 0 && glm_status == 0 ))
+  if record=$(timeout 25 "${command[@]}") && jq -e . >/dev/null 2>&1 <<<"$record"; then
+    tmp=$(mktemp "$usage_dir/.$id.XXXXXX")
+    printf '%s\n' "$record" >"$tmp"
+    mv "$tmp" "$usage_dir/$id.json"
+  else
+    echo "omarchy-agent-usage-update: $id collector failed" >&2
+    collect_status=1
+  fi
+done
+
+(( stock_status == 0 && collect_status == 0 ))
