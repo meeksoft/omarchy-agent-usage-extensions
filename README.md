@@ -1,7 +1,8 @@
 # Omarchy Agent Usage Extensions
 
-An Omarchy bar plugin that extends the built-in Agents panel with subscription
-quota meters for GitHub Copilot and Z.ai GLM Coding Plan.
+An Omarchy bar plugin that extends the built-in Agents panel with GitHub
+Copilot and Z.ai GLM Coding Plan quota meters, plus an xAI Grok prepaid-credit
+meter.
 
 The plugin retains Omarchy's built-in Claude, Codex, and Fireworks records. Its
 provider selector uses a two-column layout with balanced multiline names so
@@ -14,6 +15,7 @@ additional providers remain readable.
 - Python 3.11 or newer, and `uv` to build the Copilot collector's environment
 - GitHub Copilot CLI and an authenticated GitHub CLI for Copilot quota
 - A Z.ai or BigModel Coding Plan key for GLM quota
+- An xAI management key and team ID for the optional Grok prepaid balance
 
 ## Install from a local checkout
 
@@ -116,6 +118,23 @@ usage records.
 GLM reports subscription quotas only. Claude Code transcript totals remain in
 the Claude provider, avoiding duplicate local statistics.
 
+### Grok (xAI)
+
+The Grok collector reads an xAI team prepaid balance from the management API.
+Create `~/.config/omarchy/agents/grok.json`, keep it `0600`, and provide:
+
+```json
+{
+  "XAI_MANAGEMENT_KEY": "your-management-key",
+  "XAI_TEAM_ID": "your-team-id"
+}
+```
+
+Use a management key, not an `xai-` inference key. Management keys can carry
+powerful account permissions, so grant only the billing access the collector
+needs and do not place the key in this repository. The collector sends it only
+to `management-api.x.ai` over HTTPS.
+
 ## Usage
 
 ### Exhaustion alarm
@@ -136,11 +155,18 @@ colour, so this shows on the tabs you are not currently reading — which is the
 case the strip needs to answer. The selected provider's own meters already turn
 urgent in the panel body.
 
-The panel refreshes automatically. To update manually:
+The panel refreshes automatically. Opening it requests fresh account values
+from every enabled provider while reusing recent local transcript scans. Press
+`R` while the panel is open to force a complete refresh. Copilot and GLM quota
+values and Grok's prepaid balance come from their provider accounts, so the
+meters include activity from other devices signed in to the same accounts.
+
+To update from a terminal:
 
 ```bash
 ./bin/omarchy-agent-usage-update copilot
 ./bin/omarchy-agent-usage-update glm
+./bin/omarchy-agent-usage-update grok
 ./bin/omarchy-agent-usage-update --force
 ```
 

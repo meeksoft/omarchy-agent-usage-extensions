@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "meeksoft.agent-usage-extensions",
   "name": "Agent Usage Extensions",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "author": "Meeksoft",
   "license": "MIT",
-  "description": "Adds GitHub Copilot and GLM Coding Plan quotas to Omarchy's Agents panel.",
+  "description": "Adds GitHub Copilot, GLM Coding Plan, and Grok account usage to Omarchy's Agents panel.",
   "kinds": [
     "bar-widget"
   ],
@@ -15,13 +15,14 @@
   },
   "barWidget": {
     "displayName": "Agent Usage Extensions",
-    "description": "Omarchy's Agents panel with GitHub Copilot and GLM Coding Plan collectors.",
+    "description": "Omarchy's Agents panel with GitHub Copilot, GLM Coding Plan, and Grok collectors.",
     "category": "AI",
     "aliases": [
       "agents",
       "model-usage",
       "copilot",
-      "glm"
+      "glm",
+      "grok"
     ],
     "allowMultiple": false,
     "defaults": {

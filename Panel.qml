@@ -86,11 +86,24 @@ Panel {
     usage.refreshAll(true)
   }
 
+  function localFilePath(url) {
+    var value = String(url || "")
+    if (value.indexOf("file://") !== 0) return ""
+    value = value.substring(7)
+    try {
+      return decodeURIComponent(value)
+    } catch (e) {
+      return value
+    }
+  }
+
   function bundledUpdater() {
-    if (!root.bar || !root.bar.barWidgetRegistry) return "omarchy-agent-usage-update"
-    var metadata = root.bar.barWidgetRegistry.metadataFor(root.moduleName)
-    if (!metadata || !metadata.sourceDir) return "omarchy-agent-usage-update"
-    return metadata.sourceDir + "/bin/omarchy-agent-usage-update"
+    // Third-party widgets receive a restricted bar facade with no registry,
+    // so looking up sourceDir there always fell back to PATH. Omarchy's own
+    // bin directory precedes the user's bin directory in the shell session,
+    // which silently selected the stock updater and skipped our collectors.
+    var path = localFilePath(Qt.resolvedUrl("bin/omarchy-agent-usage-update"))
+    return path || "omarchy-agent-usage-update"
   }
 
   function providerTabName(name) {
