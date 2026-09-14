@@ -66,8 +66,8 @@ Every collector here resolves credentials the same way, in `lib/agent_credential
 
 Where an agent's own tool already keeps a credential on disk, the collector
 reads that rather than asking for a copy: Copilot uses the authenticated GitHub
-CLI, and the packaged Claude and Codex collectors read their own state
-directories.
+CLI, GLM reads opencode and kilo, and the packaged Claude and Codex collectors
+read their own state directories.
 
 The bar panel runs under quickshell, which never sources a shell rc. A key
 exported from `~/.zshrc` therefore reaches a terminal but not the panel, so an
@@ -94,26 +94,41 @@ source of truth.
 
 ### GLM Coding Plan
 
-The collector reads credentials at runtime. Later sources never override an
-earlier one, except the process environment, which wins over every file:
+If opencode or kilo already talks to the Coding Plan, the collector finds that
+key and needs no setup. It uses the first key it finds, in this order:
 
-1. `~/.config/omarchy/agents/glm.json` — the preferred location. Keys sit at
-   the top level, or nested under `env`. Keep it `0600`.
-2. Claude Code's `settings.json` or `settings.local.json` `env` values.
-3. `~/.config/claude-profiles/glm.env`, still read for existing installs.
-4. Process environment variables, which override the files above.
+1. **A Z.ai key by name.** `ZAI_CODING_PLAN_API_KEY`, `ZAI_API_KEY`,
+   `ZHIPU_API_KEY`, or `ZHIPUAI_API_KEY`, read from these sources in turn:
+   the process environment, `~/.config/omarchy/agents/glm.json` (keys at the
+   top level or under `env`; keep it `0600`), Claude Code's `settings.json` or
+   `settings.local.json` `env` values, and `~/.config/claude-profiles/glm.env`.
+2. **The key opencode or kilo uses** for a `zai-coding-plan`,
+   `zhipuai-coding-plan`, `zai`, or `zhipuai` provider, coding-plan providers
+   first. Each tool is read the way it reads itself:
+   - `provider.<id>.options.apiKey` in its global config — `opencode.jsonc`,
+     `opencode.json`, or `config.json` under `$XDG_CONFIG_HOME/opencode` (kilo
+     also reads `kilo.jsonc` and `kilo.json` under `$XDG_CONFIG_HOME/kilo`) —
+     and in `OPENCODE_CONFIG_CONTENT`, `OPENCODE_CONFIG_DIR`, and
+     `OPENCODE_CONFIG`, or their `KILO_` equivalents. `{env:NAME}` and
+     `{file:path}` placeholders are resolved, and an `{env:}` name may also be
+     set in the files from step 1.
+   - The credential saved by the tool's login flow, in its database
+     (`$XDG_DATA_HOME/opencode/opencode.db`, `$XDG_DATA_HOME/kilo/kilo.db`) or
+     its older `auth.json` beside it.
 
-The bar panel runs under quickshell, which never sources a shell rc, so a key
-exported from `~/.zshrc` reaches a terminal but not the panel. Put it in one of
-the files above.
+   The quota endpoint follows the provider's `baseURL` when that is a Z.ai or
+   BigModel host, and the provider's own host otherwise.
+3. **`ANTHROPIC_AUTH_TOKEN`, only where it is plainly a GLM key**: in
+   `glm.json` or `glm.env` with no `ANTHROPIC_BASE_URL` beside it, or in any
+   step-1 source whose own `ANTHROPIC_BASE_URL` is a Z.ai or BigModel host. The
+   default endpoint is Z.ai, so an Anthropic key anywhere else is never sent.
 
-Supported token names are `ZAI_CODING_PLAN_API_KEY`, `ZAI_API_KEY`,
-`ZHIPU_API_KEY`, and `ZHIPUAI_API_KEY`, in that order, so a coding-plan key
-outranks a generic platform key. `ANTHROPIC_AUTH_TOKEN` is not accepted: the
-default endpoint is Z.ai, and reading Anthropic's own variable would send an
-Anthropic key to a third party. `ANTHROPIC_BASE_URL` selects international Z.ai or
-BigModel China. Credentials are never copied into this repository or generated
-usage records.
+Outside step 3, `ANTHROPIC_BASE_URL` selects international Z.ai or BigModel
+China. Within steps 1 and 2 an earlier source wins; a key exported only from
+`~/.zshrc` never reaches the panel, which runs under quickshell. When no key is
+found the record lists where it looked, and when Z.ai rejects one it names the
+file the key came from. Credentials are never copied into this repository or
+generated usage records.
 
 GLM reports subscription quotas only. Claude Code transcript totals remain in
 the Claude provider, avoiding duplicate local statistics.
@@ -168,6 +183,12 @@ To update from a terminal:
 ./bin/omarchy-agent-usage-update glm
 ./bin/omarchy-agent-usage-update grok
 ./bin/omarchy-agent-usage-update --force
+```
+
+To run the credential tests, which use only the standard library:
+
+```bash
+python3 -m unittest discover -s tests
 ```
 
 Display records are written beneath the current user's XDG state directory.

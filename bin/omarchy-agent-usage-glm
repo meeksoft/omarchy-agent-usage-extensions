@@ -9,21 +9,44 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-from agent_credentials import agent_values, first_present  # noqa: E402
+from agent_credentials import (  # noqa: E402
+    agent_config_path,
+    agent_sources,
+    first_present,
+    merged_values,
+    opencode_family_keys,
+)
 
 
 ALLOWED_HOSTS = {"api.z.ai", "open.bigmodel.cn", "dev.bigmodel.cn"}
+DEFAULT_BASE_URL = "https://api.z.ai/api/anthropic"
 # Z.ai names only, most specific first, so a key meant for the coding plan
-# always outranks a generic platform key. ANTHROPIC_AUTH_TOKEN is deliberately
-# absent: it is Anthropic's name, and the default base URL points at Z.ai, so
-# honouring it would send a real Anthropic key to a third party.
+# always outranks a generic platform key. ANTHROPIC_AUTH_TOKEN is not here: it
+# is Anthropic's name, and credentials() admits it only where it is plainly a
+# GLM key.
 TOKEN_KEYS = ("ZAI_CODING_PLAN_API_KEY", "ZAI_API_KEY", "ZHIPU_API_KEY", "ZHIPUAI_API_KEY")
+# The provider ids opencode and kilo give Z.ai, most specific first. The
+# zhipuai ones are BigModel China's.
+PROVIDER_IDS = ("zai-coding-plan", "zhipuai-coding-plan", "zai", "zhipuai")
+NOT_FOUND_HELP = (
+    "No Z.ai key found in the environment, ~/.config/omarchy/agents/glm.json, Claude Code settings, "
+    "~/.config/claude-profiles/glm.env, opencode, or kilo. Set ZAI_CODING_PLAN_API_KEY in "
+    "~/.config/omarchy/agents/glm.json, or connect Z.ai in opencode or kilo."
+)
+
+
+@dataclass(frozen=True)
+class Credential:
+    token: str
+    base_url: str
+    source: str
 
 
 def base_record() -> dict[str, Any]:
@@ -37,7 +60,7 @@ def base_record() -> dict[str, Any]:
         "hasPromptStats": False,
         "tierLabel": "",
         "usageStatusText": "GLM quota unavailable",
-        "authHelpText": "Set ZAI_CODING_PLAN_API_KEY in ~/.config/omarchy/agents/glm.json.",
+        "authHelpText": NOT_FOUND_HELP,
         "limits": [],
         "todayPrompts": 0,
         "todaySessions": 0,
@@ -52,19 +75,54 @@ def base_record() -> dict[str, Any]:
     }
 
 
-def credentials() -> tuple[str, str]:
-    # ~/.config/omarchy/agents/glm.json is the preferred home; the Claude Code
-    # settings and the profile env file stay supported for existing installs.
-    home = Path.home()
-    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", home / ".claude"))
-    values = agent_values("glm", (
+def supported(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname in ALLOWED_HOSTS
+
+
+def profile_path() -> Path:
+    return Path.home() / ".config/claude-profiles/glm.env"
+
+
+def credentials() -> Credential | None:
+    """The key to query and where it came from, or None when there is none.
+
+    1. A key under a Z.ai name, from the environment, glm.json, Claude Code's
+       settings, or the GLM profile, in that order.
+    2. The key opencode or kilo would send to a Z.ai provider.
+    3. ANTHROPIC_AUTH_TOKEN where it is plainly a GLM key. The name is
+       Anthropic's and the default endpoint is Z.ai's, so it counts only in a
+       file kept for GLM with no other endpoint beside it, or next to a Z.ai
+       base URL in the same source — never on the strength of a base URL set
+       somewhere else.
+    """
+    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+    sources = agent_sources("glm", (
         config_dir / "settings.json",
         config_dir / "settings.local.json",
-        home / ".config/claude-profiles/glm.env",
+        profile_path(),
     ))
-    token = first_present(values, TOKEN_KEYS)
-    base_url = values.get("ANTHROPIC_BASE_URL", "https://api.z.ai/api/anthropic")
-    return token, base_url
+    fallback = next((s.values["ANTHROPIC_BASE_URL"] for s in sources
+                     if supported(s.values.get("ANTHROPIC_BASE_URL", ""))), DEFAULT_BASE_URL)
+
+    for source in sources:
+        if token := first_present(source.values, TOKEN_KEYS):
+            return Credential(token, source.values.get("ANTHROPIC_BASE_URL") or fallback, source.label)
+
+    if found := next(opencode_family_keys(PROVIDER_IDS, merged_values(sources)), None):
+        if supported(found.base_url):
+            base_url = found.base_url
+        else:
+            base_url = "https://open.bigmodel.cn" if found.provider_id.startswith("zhipuai") else "https://api.z.ai"
+        return Credential(found.key, base_url, found.source)
+
+    glm_files = {agent_config_path("glm"), profile_path()}
+    for source in sources:
+        token = source.values.get("ANTHROPIC_AUTH_TOKEN")
+        own = source.values.get("ANTHROPIC_BASE_URL", "")
+        if token and (supported(own) or (not own and source.path in glm_files)):
+            return Credential(token, own or DEFAULT_BASE_URL, source.label)
+    return None
 
 
 def percentage(item: dict[str, Any]) -> float | None:
@@ -107,20 +165,18 @@ def limit_label(item: dict[str, Any]) -> str:
 
 def collect() -> dict[str, Any]:
     record = base_record()
-    token, base_url = credentials()
-    if not token:
+    credential = credentials()
+    if credential is None:
+        return record
+    if not supported(credential.base_url):
+        record["authHelpText"] = f"ANTHROPIC_BASE_URL in {credential.source} is not a supported Z.ai endpoint."
         return record
 
-    parsed = urlparse(base_url)
-    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
-        record["authHelpText"] = "ANTHROPIC_BASE_URL is not a supported Z.ai endpoint."
-        return record
-
-    endpoint = f"https://{parsed.netloc}/api/monitor/usage/quota/limit"
+    endpoint = f"https://{urlparse(credential.base_url).hostname}/api/monitor/usage/quota/limit"
     request = urllib.request.Request(
         endpoint,
         headers={
-            "Authorization": token,
+            "Authorization": credential.token,
             "Accept-Language": "en-US,en",
             "Content-Type": "application/json",
             "User-Agent": "omarchy-agent-usage-glm/1",
@@ -131,7 +187,7 @@ def collect() -> dict[str, Any]:
         with urllib.request.urlopen(request, timeout=15, context=context) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as exc:
-        record["authHelpText"] = f"Z.ai rejected the quota request (HTTP {exc.code})."
+        record["authHelpText"] = f"Z.ai rejected the key from {credential.source} (HTTP {exc.code})."
         return record
     except (urllib.error.URLError, TimeoutError, ValueError) as exc:
         record["authHelpText"] = f"Z.ai quota request failed: {type(exc).__name__}."
